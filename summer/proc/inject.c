@@ -213,7 +213,7 @@ void replace_got(pid_t child,unsigned long got_addr,unsigned long inject_addr){
 
 int main(int argc, char *argv[]) {
 
-    if (argc != 4) {
+    if (argc != 5) {
     printf("Usage: %s <executable> <function1> <sharedLibrary> <function2>\n", argv[0]);
     return 1;
    }

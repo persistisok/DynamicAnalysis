@@ -48,7 +48,7 @@ unsigned long get_dlopen_addr(pid_t child){
                 // 找到可执行文件所在的行
                 unsigned long start, end;
                 sscanf(line, "%lx-%lx", &start, &end);
-                unsigned long offset = 0x15f990;  // 静态文件中的地址偏移量
+                unsigned long offset = 0x15fbb0;  // 静态文件中的地址偏移量
                 dlopen_addr = start + offset;
                 break;
                 }
@@ -78,7 +78,7 @@ unsigned long put_lib_path(pid_t child,const unsigned char* path){
     regs_change.rdi = 0;
     regs_change.rsi = len;
     regs_change.rdx = 5;		/* PROT_READ | PROT_EXEC */
-    regs_change.r10 = 0x22;	/* MAP_PRIVATE | MAP_ANONYMOUS */
+    regs_change.r10 = 0x22;	    /* MAP_PRIVATE | MAP_ANONYMOUS */
     regs_change.r8 = -1;
     regs_change.r9 = 0;
     if (0 != ptrace(PTRACE_SETREGS, child, 0, &regs_change)) {
@@ -173,7 +173,6 @@ unsigned long get_func_addr(pid_t child, unsigned char* lib_name, unsigned char*
                 // 找到可执行文件所在的行
                 unsigned long start, end;
                 sscanf(line, "%lx-%lx", &start, &end);
-                // printf("Addr of ./libc.so start:%lx\n", start);
                 unsigned char lib_path[50] = "./";
                 strncat(lib_path, lib_name, strlen(lib_name));
                 unsigned long offset = get_sym_off(lib_path,func_name);  // 静态文件中的地址偏移量
@@ -199,7 +198,6 @@ unsigned long get_got_addr(pid_t child, unsigned char* prog_name, unsigned char*
                 // 找到可执行文件所在的行
                 unsigned long start, end;
                 sscanf(line, "%lx-%lx", &start, &end);
-                // printf("Addr of ./libc.so start:%lx\n", start);
                 // unsigned long offset = 0x3fc8;  // 静态文件中的地址偏移量
                 unsigned char prog_path[50] = "./";
                 strncat(prog_path, prog_name, strlen(prog_name));
@@ -251,9 +249,16 @@ int main(int argc, const char* argv[]) {
     unsigned char func_name_origin[strlen(argv[2])];
     strcpy(func_name_origin,argv[2]);
     unsigned long got_addr = get_got_addr(child,prog_name,func_name_origin);
-
+    unsigned long func_addr_origin = ptrace(PTRACE_PEEKDATA,child,got_addr,0);
     replace_got(child,got_addr,func_addr);
+   
+    ptrace(PTRACE_CONT,child,0,0);
+    
+    
+    wait(NULL);
+    replace_got(child,got_addr,func_addr_origin);
 
     ptrace(PTRACE_DETACH,child,NULL,NULL);
+
     return 0;
 }
