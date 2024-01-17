@@ -142,7 +142,7 @@ void read_deep_dependencies(Elf *elf, LibraryPath **visited) {
 
                     if (library_path != NULL) {
                         if(library_path == "")return;
-                        printf("%s (Absolute Path: %s)\n", library_name, library_path);
+                        printf("%s(Absolute Path: %s)\n", library_name, library_path);
 
                         // Recursively read deep dependencies
                         int fd = open(library_path, O_RDONLY, 0);
@@ -163,8 +163,6 @@ void read_deep_dependencies(Elf *elf, LibraryPath **visited) {
         }
     }
 }
-
-
 
 void read_dt_needed(Elf *elf, LibraryPath **visited) {
     // Initial call with DT_NEEDED from the main executable
