@@ -6,11 +6,33 @@
 #include <libelf.h>
 #include <gelf.h>
 
+// Structure to store library paths and avoid duplicates
+typedef struct LibraryPath {
+    char *path;
+    struct LibraryPath *next;
+} LibraryPath;
+
 // Function to search for library in specified order
-char* search_library(const char *library_name, const char *runpath, const char *ld_library_path) {
+char* search_library(const char *library_name, const char *runpath, const char *ld_library_path, LibraryPath **visited) {
     char *library_path = NULL;
 
-    // 1. Search in /etc/ld.so.cache
+    // 1. Check if already visited to avoid duplicates
+    LibraryPath *current = *visited;
+    while (current != NULL) {
+        if (strcmp(current->path, library_name) == 0) {
+            // Already visited, return ""
+            return "";
+        }
+        current = current->next;
+    }
+
+    // 2. Add the current library to visited list
+    LibraryPath *new_node = (LibraryPath *)malloc(sizeof(LibraryPath));
+    new_node->path = strdup(library_name);
+    new_node->next = *visited;
+    *visited = new_node;
+
+    // 3. Search in /etc/ld.so.cache
     FILE *ld_cache_file = fopen("/etc/ld.so.cache", "r");
     if (ld_cache_file != NULL) {
         char line[256];
@@ -28,7 +50,7 @@ char* search_library(const char *library_name, const char *runpath, const char *
         fclose(ld_cache_file);
     }
 
-    // 2. Search in DT_RUNPATH
+    // 4. Search in DT_RUNPATH
     if (runpath != NULL && strlen(runpath) > 0) {
         char potential_path[256];
         snprintf(potential_path, sizeof(potential_path), "%s/%s", runpath, library_name);
@@ -38,7 +60,7 @@ char* search_library(const char *library_name, const char *runpath, const char *
         }
     }
 
-    // 3. Search in LD_LIBRARY_PATH
+    // 5. Search in LD_LIBRARY_PATH
     if (ld_library_path != NULL) {
         char *token = strtok((char *)ld_library_path, ":");
         while (token != NULL) {
@@ -52,8 +74,8 @@ char* search_library(const char *library_name, const char *runpath, const char *
         }
     }
 
-    // 4. Search in default paths (e.g., /lib, /usr/lib)
-    const char *default_paths[] = {"/lib", "/lib/x86_64-linux-gnu", "usr/lib",NULL};
+    // 6. Search in default paths (e.g., /lib, /usr/lib)
+    const char *default_paths[] = {"/lib", "/lib/x86_64-linux-gnu", "/usr/lib", NULL};
     for (int i = 0; default_paths[i] != NULL; ++i) {
         char potential_path[256];
         snprintf(potential_path, sizeof(potential_path), "%s/%s", default_paths[i], library_name);
@@ -83,15 +105,17 @@ char* read_dt_runpath(Elf *elf) {
                 if (dyn.d_tag == DT_RUNPATH) {
                     char *runpath = elf_strptr(elf, shdr.sh_link, dyn.d_un.d_val);
                     printf("DT_RUNPATH: %s\n", runpath);
-                    return runpath;
+                    return strdup(runpath);
                 }
             }
         }
     }
     return NULL;
 }
+// Recursive function to read deep dependencies
+void read_deep_dependencies(Elf *elf, LibraryPath **visited) {
+    char *runpath = read_dt_runpath(elf);
 
-void read_dt_needed(Elf *elf, const char *runpath, const char *ld_library_path) {
     Elf_Scn *scn = NULL;
     while ((scn = elf_nextscn(elf, scn)) != NULL) {
         GElf_Shdr shdr;
@@ -108,10 +132,24 @@ void read_dt_needed(Elf *elf, const char *runpath, const char *ld_library_path) 
                     const char *library_name = elf_strptr(elf, shdr.sh_link, dyn.d_un.d_val);
 
                     // Search for library in specified order
-                    char *library_path = search_library(library_name, runpath, ld_library_path);
+                    char *library_path = search_library(library_name, runpath, getenv("LD_LIBRARY_PATH"), visited);
 
                     if (library_path != NULL) {
+                        if(library_path == "")return;
                         printf("DT_NEEDED: %s (Absolute Path: %s)\n", library_name, library_path);
+
+                        // Recursively read deep dependencies
+                        int fd = open(library_path, O_RDONLY, 0);
+                        if (fd >= 0) {
+                            Elf *sub_elf = elf_begin(fd, ELF_C_READ, NULL);
+                            if (sub_elf != NULL) {
+                                // Recursive call
+                                read_deep_dependencies(sub_elf, visited);
+                                elf_end(sub_elf);
+                            }
+                            close(fd);
+                        }
+
                         free(library_path);
                     } else {
                         printf("DT_NEEDED: %s (Path not found)\n", library_name);
@@ -120,6 +158,13 @@ void read_dt_needed(Elf *elf, const char *runpath, const char *ld_library_path) 
             }
         }
     }
+}
+
+
+
+void read_dt_needed(Elf *elf, LibraryPath **visited) {
+    // Initial call with DT_NEEDED from the main executable
+    read_deep_dependencies(elf, visited);
 }
 
 int main(int argc, char *argv[]) {
@@ -148,8 +193,20 @@ int main(int argc, char *argv[]) {
         close(fd);
         return 1;
     }
-    char* runpath = read_dt_runpath(elf);
-    read_dt_needed(elf, runpath, getenv("LD_LIBRARY_PATH"));
+
+    // Create a visited list to avoid duplicates
+    LibraryPath *visited = NULL;
+
+    read_dt_needed(elf, &visited);
+
+    // Free visited list
+    LibraryPath *current = visited;
+    while (current != NULL) {
+        LibraryPath *next = current->next;
+        free(current->path);
+        free(current);
+        current = next;
+    }
 
     elf_end(elf);
     close(fd);
