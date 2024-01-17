@@ -53,7 +53,7 @@ char* search_library(const char *library_name, const char *runpath, const char *
     }
 
     // 4. Search in default paths (e.g., /lib, /usr/lib)
-    const char *default_paths[] = {"/lib", "/usr/lib", NULL};
+    const char *default_paths[] = {"/lib", "/lib/x86_64-linux-gnu", "user/lib",NULL};
     for (int i = 0; default_paths[i] != NULL; ++i) {
         char potential_path[256];
         snprintf(potential_path, sizeof(potential_path), "%s/%s", default_paths[i], library_name);
@@ -98,10 +98,6 @@ void read_dt_needed(Elf *elf, const char *runpath, const char *ld_library_path) 
     }
 }
 
-void read_dt_runpath(Elf *elf) {
-    // Similar to the previous function, you can implement it based on the information provided.
-}
-
 int main(int argc, char *argv[]) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <elf_filename>\n", argv[0]);
@@ -128,9 +124,7 @@ int main(int argc, char *argv[]) {
         close(fd);
         return 1;
     }
-
     read_dt_needed(elf, NULL, getenv("LD_LIBRARY_PATH"));
-    read_dt_runpath(elf);
 
     elf_end(elf);
     close(fd);
