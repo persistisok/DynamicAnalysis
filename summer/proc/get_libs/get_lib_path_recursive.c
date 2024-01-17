@@ -8,6 +8,7 @@
 
 // Structure to store library paths and avoid duplicates
 typedef struct LibraryPath {
+    char *name;
     char *path;
     struct LibraryPath *next;
 } LibraryPath;
@@ -19,7 +20,7 @@ char* search_library(const char *library_name, const char *runpath, const char *
     // 1. Check if already visited to avoid duplicates
     LibraryPath *current = *visited;
     while (current != NULL) {
-        if (strcmp(current->path, library_name) == 0) {
+        if (strcmp(current->name, library_name) == 0) {
             // Already visited, return ""
             return "";
         }
@@ -28,7 +29,7 @@ char* search_library(const char *library_name, const char *runpath, const char *
 
     // 2. Add the current library to visited list
     LibraryPath *new_node = (LibraryPath *)malloc(sizeof(LibraryPath));
-    new_node->path = strdup(library_name);
+    new_node->name = strdup(library_name);
     new_node->next = *visited;
     *visited = new_node;
 
@@ -42,6 +43,7 @@ char* search_library(const char *library_name, const char *runpath, const char *
                 if (strcmp(token, library_name) == 0) {
                     library_path = strdup(token);
                     fclose(ld_cache_file);
+                    new_node->path = library_path;
                     return library_path;
                 }
                 token = strtok(NULL, " \t");
@@ -56,6 +58,7 @@ char* search_library(const char *library_name, const char *runpath, const char *
         snprintf(potential_path, sizeof(potential_path), "%s/%s", runpath, library_name);
         if (access(potential_path, F_OK) == 0) {
             library_path = strdup(potential_path);
+            new_node->path = library_path;
             return library_path;
         }
     }
@@ -68,6 +71,7 @@ char* search_library(const char *library_name, const char *runpath, const char *
             snprintf(potential_path, sizeof(potential_path), "%s/%s", token, library_name);
             if (access(potential_path, F_OK) == 0) {
                 library_path = strdup(potential_path);
+                new_node->path = library_path;
                 return library_path;
             }
             token = strtok(NULL, ":");
@@ -81,11 +85,13 @@ char* search_library(const char *library_name, const char *runpath, const char *
         snprintf(potential_path, sizeof(potential_path), "%s/%s", default_paths[i], library_name);
         if (access(potential_path, F_OK) == 0) {
             library_path = strdup(potential_path);
+            new_node->path = library_path;
             return library_path;
         }
     }
 
     // If not found in any of the paths, return NULL
+    new_node->path = NULL;
     return NULL;
 }
 
@@ -136,7 +142,7 @@ void read_deep_dependencies(Elf *elf, LibraryPath **visited) {
 
                     if (library_path != NULL) {
                         if(library_path == "")return;
-                        printf("DT_NEEDED: %s (Absolute Path: %s)\n", library_name, library_path);
+                        printf("%s (Absolute Path: %s)\n", library_name, library_path);
 
                         // Recursively read deep dependencies
                         int fd = open(library_path, O_RDONLY, 0);
@@ -149,8 +155,6 @@ void read_deep_dependencies(Elf *elf, LibraryPath **visited) {
                             }
                             close(fd);
                         }
-
-                        free(library_path);
                     } else {
                         printf("DT_NEEDED: %s (Path not found)\n", library_name);
                     }
@@ -203,6 +207,7 @@ int main(int argc, char *argv[]) {
     LibraryPath *current = visited;
     while (current != NULL) {
         LibraryPath *next = current->next;
+        free(current->name);
         free(current->path);
         free(current);
         current = next;
