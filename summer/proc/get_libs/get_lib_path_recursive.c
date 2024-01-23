@@ -118,6 +118,7 @@ char* read_dt_runpath(Elf *elf) {
     }
     return NULL;
 }
+
 // Recursive function to read deep dependencies
 void read_deep_dependencies(Elf *elf, LibraryPath **visited) {
     char *runpath = read_dt_runpath(elf);
