@@ -15,7 +15,7 @@
 
 extern unsigned long get_sym_off(const char* elf_file, const char* func_name);
 extern unsigned long get_rela_off(const char* filename, const char* func_name);
-
+extern unsigned long get_free_mem(pid_t pid, unsigned long target_addr);
 static int wr2mem(pid_t pid, unsigned long addr, const unsigned char* buf, size_t len)
 {
 	size_t i;
@@ -216,8 +216,7 @@ void replace_got(pid_t child,unsigned long got_addr,unsigned long inject_addr){
     ptrace(PTRACE_POKEDATA,child,got_addr,inject_addr);
 }
 
-unsigned long new_got(pid_t child, unsigned long func_addr){
-    size_t len = sizeof(unsigned long);
+unsigned long new_plt_got(pid_t child, unsigned long start_addr, unsigned long func_addr){
 	unsigned long bakopc;
 	struct user_regs_struct regs_origin;
 	struct user_regs_struct regs_change;
@@ -232,9 +231,9 @@ unsigned long new_got(pid_t child, unsigned long func_addr){
     * Note that ptrace does not need for PROT_WRITE
     */
     regs_change.rax = 9;		/* sys_mmap */
-    regs_change.rdi = 0;
-    regs_change.rsi = len;
-    regs_change.rdx = 5;		/* PROT_READ | PROT_EXEC */
+    regs_change.rdi = start_addr;
+    regs_change.rsi = 24;
+    regs_change.rdx = 7;		/* PROT_READ | PROT_EXEC */
     regs_change.r10 = 0x22;	    /* MAP_PRIVATE | MAP_ANONYMOUS */
     regs_change.r8 = -1;
     regs_change.r9 = 0;
@@ -281,8 +280,17 @@ unsigned long new_got(pid_t child, unsigned long func_addr){
 	    return 1;
     }
 
-	/* Write shellcode (skipping backed up rip). */
-    if (0 != ptrace(PTRACE_POKEDATA,child,regs_change.rax,func_addr)) {
+    if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax,0xf30f1efaf2ff250c)) {
+	    perror("Failed to write shellcode to memory");
+    	return 1;
+    }
+
+    if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax + 8,0x2f00000f1f440000)) {
+	    perror("Failed to write shellcode to memory");
+    	return 1;
+    }
+
+    if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax + 16,func_addr)) {
 	    perror("Failed to write shellcode to memory");
     	return 1;
     }
@@ -295,14 +303,16 @@ unsigned long new_got(pid_t child, unsigned long func_addr){
     return regs_change.rax;
 }
 
-unsigned long new_plt(pid_t child, long got_addr){
-    return 0;
+void modify_target_addr(pid_t child, unsigned long target_addr, unsigned long plt_addr){
+    unsigned long origin_text = ptrace(PTRACE_PEEKTEXT, child,target_addr, 0);
+    uint64_t result = (target_addr & 0xFF00000000FFFFFF) | (plt_addr << 24);
+    ptrace(PTRACE_POKEDATA,child,target_addr,plt_addr);
 }
 
 int main(int argc, const char* argv[]) {
 
-    if (argc != 6) {
-    printf("Usage: %s <proc_name> <function1> <lib_name> <function2> <pid>\n", argv[0]);
+    if (argc != 9) {
+    printf("Usage: %s <proc_name> <function1> <lib_name> <function2> <pid> <addr> <lib_name1> <function3>\n", argv[0]);
     return 1;
     }
 
@@ -316,9 +326,7 @@ int main(int argc, const char* argv[]) {
     unsigned char lib_path[50] = "./";
     strncat(lib_path, argv[3], strlen(argv[3]));
     unsigned long lib_addr = put_lib_path(child,lib_path);
-    unsigned long test = 0x7ff865086000;
-    unsigned long addr =  new_got(child,test);
-    fprintf(stderr,"addr: %lx\n",addr);
+    
     unsigned long dlopen_addr = get_dlopen_addr(child);
 
     inject_lib(child,lib_addr,dlopen_addr);
@@ -337,6 +345,20 @@ int main(int argc, const char* argv[]) {
     unsigned long func_addr_origin = ptrace(PTRACE_PEEKDATA,child,got_addr,0);
     replace_got(child,got_addr,func_addr);
     
+    unsigned long target_addr = atoi(argv[6]);
+    unsigned char lib_name[strlen(argv[7])];
+    strcpy(lib_name,argv[7]);
+    unsigned long start_addr = get_free_mem(child,target_addr);
+    unsigned long func_addr1 = get_func_addr(child,lib_name,func_name_inject);
+    if(start_addr != 0 && func_addr1 != 0){
+        unsigned long plt_addr = new_plt_got(child,start_addr,func_addr1);
+        modify_target_addr(child,target_addr,plt_addr);
+    }
+        
+
+
+
+
     ptrace(PTRACE_CONT,child,0,0);
     
     
