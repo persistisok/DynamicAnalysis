@@ -78,7 +78,7 @@ void print_memory_regions(MemoryRegion* head) {
 // 函数找到空闲区域中最小的地址，差异在32位带符号整数范围内且是0x1000的倍数
 unsigned long find_min_address(MemoryRegion* head, unsigned long target_addr) {
     unsigned long upper_bound = target_addr + 0x7FFFFFFF;
-    unsigned long lower_bound = target_addr - (u_int32_t)(1 << 31);
+    unsigned long lower_bound = target_addr > (u_int32_t)(1 << 31)? target_addr - (u_int32_t)(1 << 31):0;
     printf("lower:%lx,upper:%lx\n",lower_bound,upper_bound);
     while (head != NULL) {
         // 检查节点的start和end是否在目标地址的上下界范围内
@@ -98,12 +98,12 @@ unsigned long find_min_address(MemoryRegion* head, unsigned long target_addr) {
     return 0;
 }
 
-unsigned long get_free_addr(pid_t pid, unsigned long target_addr){
+unsigned long get_free_mem(pid_t pid, unsigned long target_addr){
     MemoryRegion* free_regions = find_free_memory_regions(pid);
 
     if (free_regions != NULL) {
-        printf("Free Memory Regions:\n");
-        print_memory_regions(free_regions);
+        // printf("Free Memory Regions:\n");
+        // print_memory_regions(free_regions);
         unsigned long free_mem = find_min_address(free_regions,target_addr);
         printf("%lx\n",free_mem);
         return free_mem;

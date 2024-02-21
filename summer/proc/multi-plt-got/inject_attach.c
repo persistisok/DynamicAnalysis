@@ -233,7 +233,7 @@ unsigned long new_plt_got(pid_t child, unsigned long start_addr, unsigned long f
     regs_change.rax = 9;		/* sys_mmap */
     regs_change.rdi = start_addr;
     regs_change.rsi = 24;
-    regs_change.rdx = 7;		/* PROT_READ | PROT_EXEC */
+    regs_change.rdx = 7;		/* PROT_READ | PROT_WRITE | PROT_EXEC */
     regs_change.r10 = 0x22;	    /* MAP_PRIVATE | MAP_ANONYMOUS */
     regs_change.r8 = -1;
     regs_change.r9 = 0;
@@ -267,25 +267,47 @@ unsigned long new_plt_got(pid_t child, unsigned long start_addr, unsigned long f
 	    perror("Failed waiting for target process");
 	    return 1;
 	}
-
+    printf("after single_step\n");
     /* Get the allocated memory address. */
     if (0 != ptrace(PTRACE_GETREGS, child, 0, &regs_change)) {
 	    perror("Failed to read registers (2)");
 	    return 1;
     }
-
+    printf("%llx\n",regs_change.rax);
 	/* Restore the overwritten opcodes. */
     if (0 != ptrace(PTRACE_POKETEXT, child, regs_origin.rip, bakopc)) {
 	    perror("Failed to restore opcodes");
 	    return 1;
     }
 
-    if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax,0xf30f1efaf2ff250c)) {
+    // if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax,0x1e0ff30000000000)) {
+	//     perror("Failed to write shellcode to memory");
+    // 	return 1;
+    // }
+
+    // if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax + 8,0x0000001125fff2fa)) {
+	//     perror("Failed to write shellcode to memory");
+    // 	return 1;
+    // }
+
+    // if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax + 16,0x0000000000441f0f)) {
+	//     perror("Failed to write shellcode to memory");
+    // 	return 1;
+    // }
+
+    // if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax + 24,0x0000000000441f0f)) {
+	//     perror("Failed to write shellcode to memory");
+    // 	return 1;
+    // }
+
+
+
+    if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax,0x0525fff2fa1e0ff3)) {
 	    perror("Failed to write shellcode to memory");
     	return 1;
     }
 
-    if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax + 8,0x2f00000f1f440000)) {
+    if (0 != ptrace(PTRACE_POKETEXT,child,regs_change.rax + 8,0x0000441f0f000000)) {
 	    perror("Failed to write shellcode to memory");
     	return 1;
     }
@@ -294,7 +316,9 @@ unsigned long new_plt_got(pid_t child, unsigned long start_addr, unsigned long f
 	    perror("Failed to write shellcode to memory");
     	return 1;
     }
-
+    unsigned long ptrace_code = ptrace(PTRACE_PEEKTEXT,child,regs_change.rax,0);
+    printf("ptrace_code: %lx\n",ptrace_code);
+    printf("before redirect\n");
 	/* Redirect execution flow. */
 	if (0 != ptrace(PTRACE_SETREGS, child, 0, &regs_origin)) {
 	    perror("Failed to redirect execution");
@@ -304,16 +328,41 @@ unsigned long new_plt_got(pid_t child, unsigned long start_addr, unsigned long f
 }
 
 void modify_target_addr(pid_t child, unsigned long target_addr, unsigned long plt_addr){
-    unsigned long origin_text = ptrace(PTRACE_PEEKTEXT, child,target_addr, 0);
-    uint64_t result = (target_addr & 0xFF00000000FFFFFF) | (plt_addr << 24);
-    ptrace(PTRACE_POKEDATA,child,target_addr,plt_addr);
+    unsigned long origin_text = ptrace(PTRACE_PEEKTEXT, child, target_addr, 0);
+    printf("origin opc:%lx\n",origin_text);
+    long offset = plt_addr - target_addr - 5;
+    printf("offset: %lx\n",offset);
+    uint64_t result = (origin_text & 0xFFFFFF00000000FF) | (offset << 8 & 0xFFFFFFFF00);
+    printf("result: %lx\n",result);
+    ptrace(PTRACE_POKEDATA,child,target_addr,result);
+}
+
+unsigned long get_start_addr(pid_t child, unsigned char* lib_name){
+    char maps_path[256];
+    sprintf(maps_path, "/proc/%d/maps", child);
+    FILE* maps_file = fopen(maps_path, "r");
+    unsigned long start, end;
+    if (maps_file != NULL) {
+        char line[256];
+        while (fgets(line, sizeof(line), maps_file)) {
+            if (strstr(line, lib_name) != NULL) {
+                // 找到可执行文件所在的行
+                sscanf(line, "%lx-%lx", &start, &end);
+                unsigned char lib_path[50] = "./";
+                strncat(lib_path, lib_name, strlen(lib_name));
+                break;
+                }
+            }
+            fclose(maps_file);
+        }
+    return start;
 }
 
 int main(int argc, const char* argv[]) {
 
     if (argc != 9) {
-    printf("Usage: %s <proc_name> <function1> <lib_name> <function2> <pid> <addr> <lib_name1> <function3>\n", argv[0]);
-    return 1;
+        printf("Usage: %s <proc_name> <function1> <lib_name> <function2> <pid> <addr> <lib_name1> <function3>\n", argv[0]);
+        return 1;
     }
 
     pid_t child = atoi(argv[5]);
@@ -343,22 +392,46 @@ int main(int argc, const char* argv[]) {
     strcpy(func_name_origin,argv[2]);
     unsigned long got_addr = get_got_addr(child,prog_name,func_name_origin);
     unsigned long func_addr_origin = ptrace(PTRACE_PEEKDATA,child,got_addr,0);
+    printf("func_addr_origin: %lx\n",func_addr_origin);
     replace_got(child,got_addr,func_addr);
     
-    unsigned long target_addr = atoi(argv[6]);
-    unsigned char lib_name[strlen(argv[7])];
-    strcpy(lib_name,argv[7]);
+
+
+
+
+    unsigned long prog_start_addr = get_start_addr(child, prog_name);
+    unsigned long target_addr = strtoul(argv[6], NULL, 16) + prog_start_addr;
+    printf("target_addr: %lx\n",target_addr);
+    unsigned char lib_name1[strlen(argv[7])];
+    strcpy(lib_name1,argv[7]);
     unsigned long start_addr = get_free_mem(child,target_addr);
-    unsigned long func_addr1 = get_func_addr(child,lib_name,func_name_inject);
+    unsigned char func_name_inject1[strlen(argv[8])];
+    strcpy(func_name_inject1,argv[8]);
+    unsigned long func_addr1 = get_func_addr(child,lib_name1,func_name_inject1);
+    printf("func_addr1: %lx\n",func_addr1);
     if(start_addr != 0 && func_addr1 != 0){
+        printf("start_addr: %lx\nfunc_addr: %lx\n",start_addr,func_addr1);
+        unsigned long plt_opc = ptrace(PTRACE_PEEKTEXT,child,prog_start_addr+0x1090,0);
+        printf("plt_opc: %lx\n",plt_opc);
         unsigned long plt_addr = new_plt_got(child,start_addr,func_addr1);
         modify_target_addr(child,target_addr,plt_addr);
     }
         
 
-
-
-
+    int i = 0;
+    while(i < 5000){
+        ptrace(PTRACE_SINGLESTEP,child,0,0);
+        waitpid(child,0,0);
+        struct user_regs_struct regs;
+	    if (0 != ptrace(PTRACE_GETREGS, child, 0, &regs)) {
+	        perror("Failed to read registers (1)");
+	        return 1;
+	    }
+        printf("rip: %llx\n",regs.rip);
+        unsigned long code = ptrace(PTRACE_PEEKTEXT,child,regs.rip,0);
+        printf("code:%lx\n",code);
+        i++;
+    }
     ptrace(PTRACE_CONT,child,0,0);
     
     
